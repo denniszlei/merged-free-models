@@ -1,0 +1,6 @@
+.env
+*.log
+/dist/
+/server
+/merged-free-models
+*.exe
