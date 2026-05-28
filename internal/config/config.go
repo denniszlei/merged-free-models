@@ -115,11 +115,18 @@ func readDotEnv(path string) (map[string]string, error) {
 }
 
 func lookup(values map[string]string, key string) (string, bool) {
-	if v, ok := os.LookupEnv(key); ok {
+	// An empty value is treated the same as "not set" so callers fall back
+	// to .env entries (or hard-coded defaults). This matches how dotenv
+	// loaders and the original opencode_proxy/kilo_auto configs behaved,
+	// and keeps `t.Setenv(k, "")` working as a way to clear a variable in
+	// tests.
+	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v, true
 	}
-	v, ok := values[key]
-	return v, ok
+	if v, ok := values[key]; ok && v != "" {
+		return v, true
+	}
+	return "", false
 }
 
 func getString(values map[string]string, key, fallback string) string {
@@ -131,7 +138,7 @@ func getString(values map[string]string, key, fallback string) string {
 
 func getBool(values map[string]string, key string, fallback bool) bool {
 	raw, ok := lookup(values, key)
-	if !ok || raw == "" {
+	if !ok {
 		return fallback
 	}
 	v, err := strconv.ParseBool(raw)
@@ -143,7 +150,7 @@ func getBool(values map[string]string, key string, fallback bool) bool {
 
 func getDuration(values map[string]string, key string, fallback time.Duration) time.Duration {
 	raw, ok := lookup(values, key)
-	if !ok || raw == "" {
+	if !ok {
 		return fallback
 	}
 	if seconds, err := strconv.Atoi(raw); err == nil {
