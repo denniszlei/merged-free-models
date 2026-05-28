@@ -145,28 +145,43 @@ func TestAuthRequired(t *testing.T) {
 	srv, _, _ := newTestServer(t, "expected-key")
 
 	// Missing key -> 401
-	resp, _ := http.Post(srv.URL+"/v1/chat/completions", "application/json",
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json",
 		strings.NewReader(`{"model":"kilo/x-ai/grok:free"}`))
+	if err != nil {
+		t.Fatalf("post (no auth): %v", err)
+	}
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401 without auth, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 
 	// X-API-Key path
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions",
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions",
 		strings.NewReader(`{"model":"kilo/x-ai/grok:free"}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
 	req.Header.Set("X-API-Key", "expected-key")
-	resp2, _ := http.DefaultClient.Do(req)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post (X-API-Key): %v", err)
+	}
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("X-API-Key auth status=%d", resp2.StatusCode)
 	}
 	resp2.Body.Close()
 
 	// Bearer path
-	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions",
+	req2, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions",
 		strings.NewReader(`{"model":"kilo/x-ai/grok:free"}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
 	req2.Header.Set("Authorization", "Bearer expected-key")
-	resp3, _ := http.DefaultClient.Do(req2)
+	resp3, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("post (Bearer): %v", err)
+	}
 	if resp3.StatusCode != http.StatusOK {
 		t.Fatalf("Bearer auth status=%d", resp3.StatusCode)
 	}
@@ -175,7 +190,10 @@ func TestAuthRequired(t *testing.T) {
 
 func TestStatusJSONShape(t *testing.T) {
 	srv, _, _ := newTestServer(t, "secret")
-	resp, _ := http.Get(srv.URL + "/status")
+	resp, err := http.Get(srv.URL + "/status")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status=%d", resp.StatusCode)
@@ -195,7 +213,10 @@ func TestStatusJSONShape(t *testing.T) {
 
 func TestStatusHTMLRenders(t *testing.T) {
 	srv, _, _ := newTestServer(t, "")
-	resp, _ := http.Get(srv.URL + "/")
+	resp, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status=%d", resp.StatusCode)
@@ -216,7 +237,10 @@ func TestHealthzReportsDegradedWhenNoneHealthy(t *testing.T) {
 	registry := provider.NewRegistry(time.Minute, bad)
 	srv := httptest.NewServer(NewServer(registry, ":8080", ""))
 	defer srv.Close()
-	resp, _ := http.Get(srv.URL + "/healthz")
+	resp, err := http.Get(srv.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("healthz=%d", resp.StatusCode)
