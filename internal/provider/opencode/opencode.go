@@ -91,6 +91,12 @@ func (p *Provider) Refresh(ctx context.Context) error {
 		return err
 	}
 	p.applyHeaders(req)
+	// Refresh parses the response body. Drop Accept-Encoding so Go's HTTP
+	// transport adds gzip on its own and transparently decodes; if we leave
+	// the broader "gzip, deflate, br, zstd" set by applyHeaders in place,
+	// Cloudflare may return brotli which the stdlib cannot decode and the
+	// JSON parser then chokes on the binary stream.
+	req.Header.Del("Accept-Encoding")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -101,6 +107,15 @@ func (p *Provider) Refresh(ctx context.Context) error {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		err := fmt.Errorf("upstream models returned %s", resp.Status)
+		p.setError(err, resp.StatusCode)
+		return err
+	}
+
+	// Defensive: if upstream ignores our Accept-Encoding and still returns
+	// something we cannot decode, fail with a clear message instead of
+	// letting json.Decoder report it as a stray binary character.
+	if enc := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))); enc != "" && enc != "identity" && enc != "gzip" {
+		err := fmt.Errorf("upstream returned unsupported Content-Encoding %q; only gzip is decoded", enc)
 		p.setError(err, resp.StatusCode)
 		return err
 	}

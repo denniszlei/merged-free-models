@@ -151,3 +151,48 @@ func TestRefreshFiltersFreeModels(t *testing.T) {
 		t.Fatalf("first model id=%q", models[0].ID)
 	}
 }
+
+// Regression for the "invalid character '\x1b'" production bug: the refresh
+// request must not advertise encodings (br, zstd) the stdlib can't decode,
+// since Cloudflare otherwise picks brotli and our JSON parser chokes.
+func TestRefreshDoesNotAdvertiseBrotliOrZstd(t *testing.T) {
+	var ae string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ae = r.Header.Get("Accept-Encoding")
+		_ = json.NewEncoder(w).Encode(upstreamList{Data: []upstreamModel{{ID: "foo-free"}}})
+	}))
+	defer upstream.Close()
+
+	cfg := config.OpenCode{BaseURL: upstream.URL, APIKey: "public", IsFree: true}
+	p := New(upstream.Client(), cfg, 5*time.Second)
+	if err := p.Refresh(t.Context()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	for _, banned := range []string{"br", "zstd", "deflate"} {
+		if strings.Contains(ae, banned) {
+			t.Errorf("refresh Accept-Encoding must not include %q (got %q)", banned, ae)
+		}
+	}
+}
+
+// If the upstream ignores our hint and still returns a body encoded with
+// something we cannot decode, surface a clear error instead of letting the
+// JSON decoder report it as a stray binary character.
+func TestRefreshReportsUnsupportedEncoding(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "br")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte{0x1b, 0xff, 0xfe, 0xfd}) // looks like the start of a brotli stream
+	}))
+	defer upstream.Close()
+
+	cfg := config.OpenCode{BaseURL: upstream.URL, APIKey: "public", IsFree: true}
+	p := New(upstream.Client(), cfg, 5*time.Second)
+	err := p.Refresh(t.Context())
+	if err == nil {
+		t.Fatal("expected an error when upstream returns an undecodable encoding")
+	}
+	if !strings.Contains(err.Error(), "Content-Encoding") {
+		t.Errorf("expected encoding-aware error, got: %v", err)
+	}
+}
