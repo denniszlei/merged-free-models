@@ -91,12 +91,8 @@ func (p *Provider) Refresh(ctx context.Context) error {
 		return err
 	}
 	p.applyHeaders(req)
-	// Refresh parses the response body. Drop Accept-Encoding so Go's HTTP
-	// transport adds gzip on its own and transparently decodes; if we leave
-	// the broader "gzip, deflate, br, zstd" set by applyHeaders in place,
-	// Cloudflare may return brotli which the stdlib cannot decode and the
-	// JSON parser then chokes on the binary stream.
-	req.Header.Del("Accept-Encoding")
+	// applyHeaders advertises only gzip, which httpx.DecodeBody decompresses
+	// below, so we no longer need to strip Accept-Encoding here.
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -220,7 +216,12 @@ func (p *Provider) applyHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	// Only advertise gzip: it is the one encoding we transparently decode (via
+	// httpx.WriteUpstream / DecodeBody). The upstream honors Accept-Encoding
+	// precisely, so advertising br/zstd makes it pick brotli, which we'd forward
+	// raw — strict downstream clients that don't honor Content-Encoding then fail
+	// to UTF-8 decode the binary body. Plaintext and gzip both decode cleanly.
+	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("X-Opencode-Client", "cli")
 	req.Header.Set("X-Opencode-Project", "global")
 	req.Header.Set("X-Opencode-Request", "msg_1")

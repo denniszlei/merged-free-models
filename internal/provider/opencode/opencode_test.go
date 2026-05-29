@@ -1,6 +1,8 @@
 package opencode
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -94,6 +96,52 @@ func TestForwardAppendsFreeSuffixAndAppliesHeaders(t *testing.T) {
 	}
 	if seenSession != "ses_1" {
 		t.Fatalf("session header=%q", seenSession)
+	}
+}
+
+// Regression: the upstream honors Accept-Encoding precisely and prefers brotli
+// when offered, which httpx.WriteUpstream would forward raw — strict clients
+// then fail to UTF-8 decode the binary body. Forward must advertise only gzip,
+// and a gzipped upstream body must reach the client as decoded plaintext.
+func TestForwardAdvertisesOnlyGzipAndDecodes(t *testing.T) {
+	var seenAE string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAE = r.Header.Get("Accept-Encoding")
+
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, _ = gz.Write([]byte(`{"ok":true}`))
+		_ = gz.Close()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer upstream.Close()
+
+	cfg := config.OpenCode{Enabled: true, BaseURL: upstream.URL, APIKey: "public", IsFree: true}
+	p := New(upstream.Client(), cfg, 5*time.Second)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"opencode/deepseek-v4-flash","messages":[]}`))
+	body, _ := io.ReadAll(req.Body)
+	rec := httptest.NewRecorder()
+
+	p.Forward(rec, req, provider.OpChat, "deepseek-v4-flash", body)
+
+	if seenAE != "gzip" {
+		t.Fatalf("Forward Accept-Encoding=%q, want exactly %q", seenAE, "gzip")
+	}
+	for _, banned := range []string{"br", "zstd", "deflate"} {
+		if strings.Contains(seenAE, banned) {
+			t.Errorf("Forward Accept-Encoding must not include %q (got %q)", banned, seenAE)
+		}
+	}
+	if rec.Body.String() != `{"ok":true}` {
+		t.Fatalf("client body not decoded to plaintext: %q", rec.Body.String())
+	}
+	if ce := rec.Header().Get("Content-Encoding"); ce != "" {
+		t.Errorf("Content-Encoding must be stripped after decoding, got %q", ce)
 	}
 }
 

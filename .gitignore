@@ -1,4 +1,5 @@
 .env
+.claude
 *.log
 /dist/
 /server
